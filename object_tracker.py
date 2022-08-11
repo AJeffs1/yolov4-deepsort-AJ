@@ -14,6 +14,7 @@ from tensorflow.python.saved_model import tag_constants
 from core.config import cfg
 from PIL import Image
 import cv2
+import csv
 import numpy as np
 import matplotlib.pyplot as plt
 from tensorflow.compat.v1 import ConfigProto
@@ -44,11 +45,13 @@ flags.DEFINE_boolean('info', False, 'show detailed info of tracked objects')
 flags.DEFINE_boolean('count', False, 'count objects being tracked on screen')
 
 def main(_argv):
+    print('start')
     # Definition of the parameters
     max_cosine_distance = 0.4
     nn_budget = None
     nms_max_overlap = 1.0
-    
+
+
     # initialize deep sort
     model_filename = 'model_data/mars-small128.pb'
     encoder = gdet.create_box_encoder(model_filename, batch_size=1)

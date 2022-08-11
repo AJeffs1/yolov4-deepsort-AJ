@@ -24,6 +24,11 @@ from deep_sort import preprocessing, nn_matching
 from deep_sort.detection import Detection
 from deep_sort.tracker import Tracker
 from tools import generate_detections as gdet
+
+# for tqdm and historical trajectory
+from tqdm import tqdm
+from collections import deque
+pts = [deque(maxlen=30) for _ in range(9999)]
 flags.DEFINE_string('framework', 'tf', '(tf, tflite, trt')
 flags.DEFINE_string('weights', './checkpoints/yolov4-416',
                     'path to weights file')
@@ -41,9 +46,8 @@ flags.DEFINE_boolean('count', False, 'count objects being tracked on screen')
 
 
 def AlexFun(Output1, Path):
-    print('in alex func')
     OutputFileTest = (Path + ".csv")
-    fieldnames = ['frame_id', 'object_id' ,'class', 'x', 'y','xmin','ymin','xmax','ymax']
+    fieldnames = ['frame_id', 'object_id' ,'class', 'x', 'y','center','xmin','ymin','xmax','ymax']
     print(OutputFileTest)
     with open(OutputFileTest, "w", newline="") as f:
         writer = csv.writer(f)
@@ -59,6 +63,7 @@ def main(_argv):
     nn_budget = None
     nms_max_overlap = 1.0
     TestOutput = []
+
     # initialize deep sort
     model_filename = 'model_data/mars-small128.pb'
     encoder = gdet.create_box_encoder(model_filename, batch_size=1)
@@ -101,11 +106,14 @@ def main(_argv):
         # by default VideoCapture returns float instead of int
         width = int(vid.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        frame_count = int(vid.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = int(vid.get(cv2.CAP_PROP_FPS))
         codec = cv2.VideoWriter_fourcc(*FLAGS.output_format)
         out = cv2.VideoWriter(FLAGS.output, codec, fps, (width, height))
 
     frame_num = 0
+    print("Total number of frames: ", frame_count)
+    pbar = tqdm(range(frame_count))
     # while video is running
     while True:
         return_value, frame = vid.read()
@@ -119,6 +127,7 @@ def main(_argv):
             break
         frame_num +=1
         print('Frame #: ', frame_num)
+        pbar.update(1)
         frame_size = frame.shape[:2]
         image_data = cv2.resize(frame, (input_size, input_size))
         image_data = image_data / 255.
@@ -174,11 +183,11 @@ def main(_argv):
         class_names = utils.read_class_names(cfg.YOLO.CLASSES)
 
         # by default allow all classes in .names file
-        allowed_classes = list(class_names.values())
+        #allowed_classes = list(class_names.values())
         
         # custom allowed classes (uncomment line below to customize tracker for only people)
         #allowed_classes = ['person']
-        #allowed_classes = ['person', 'car', 'truck']
+        allowed_classes = ['person', 'car', 'truck', 'dog']
 
         # loop through objects and use class index to get class name, allow only classes in allowed_classes list
         names = []
@@ -232,7 +241,21 @@ def main(_argv):
             cv2.rectangle(frame, (int(bbox[0]), int(bbox[1]-30)), (int(bbox[0])+(len(class_name)+len(str(track.track_id)))*17, int(bbox[1])), color, -1)
             cv2.putText(frame, class_name + "-" + str(track.track_id),(int(bbox[0]), int(bbox[1]-10)),0, 0.75, (255,255,255),2)
 
-        # if enable info flag then print details about each track
+            # Tracking with historical trajectory
+            center = (int(((bbox[0]) + (bbox[2])) / 2), int(((bbox[1]) + (bbox[3])) / 2))
+            pts[track.track_id].append(center)
+            thickness = 5
+            # center point
+            cv2.circle(frame, (center), 1, color, thickness)
+
+            # draw motion path
+            for j in range(1, len(pts[track.track_id])):
+                if pts[track.track_id][j - 1] is None or pts[track.track_id][j] is None:
+                    continue
+                thickness = int(np.sqrt(64 / float(j + 1)) * 2)
+                cv2.line(frame, (pts[track.track_id][j - 1]), (pts[track.track_id][j]), (color), thickness)
+
+            # if enable info flag then print details about each track
             if FLAGS.info:
                 print("Tracker ID: {}, Class: {},  BBox Coords (xmin, ymin, xmax, ymax): {}".format(str(track.track_id), class_name, (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))))
                 #TestOutput.append("Tracker ID: {}, Class: {},  BBox Coords (xmin, ymin, xmax, ymax): {}".format(str(track.track_id), class_name, (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))))
@@ -243,15 +266,18 @@ def main(_argv):
                 TestTemp.append(class_name)
                 TestTemp.append(TestXCO)
                 TestTemp.append(TestYCO)
+                TestTemp.append(center)
                 TestTemp.append(int(bbox[0]))
                 TestTemp.append(int(bbox[1]))
                 TestTemp.append(int(bbox[2]))
                 TestTemp.append(int(bbox[3]))
+                print(TestTemp)
                 TestOutput.append(TestTemp)
                 # append to a list that line every time, will need to also append when its starting the fram, or include it inline
         # calculate frames per second of running detections
         fps = 1.0 / (time.time() - start_time)
-        print("FPS: %.2f" % fps)
+        #print("FPS: %.2f" % fps)
+        cv2.putText(frame, "FPS: %f" % (fps), (5, 100), 0, 5e-3 * 200, (0, 0, 0), 2)
         result = np.asarray(frame)
         result = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         
